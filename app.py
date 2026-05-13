@@ -1,11 +1,12 @@
 import streamlit as st
-from streamlit_chess_board import st_chess_board
 import chess
+import chess.svg
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import base64
 
-# --- 1. 复制你原来的模型架构 (必须一致) ---
+# --- 1. 模型架构 (保持不变) ---
 class ResBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
@@ -46,55 +47,63 @@ def encode_board(board):
     if board.turn == chess.WHITE: tensor[12, :, :] = 1.0
     return tensor
 
-# --- 2. 加载模型 (缓存以提高性能) ---
+# --- 2. 加载模型 ---
 @st.cache_resource
 def load_model():
-    device = torch.device("cpu") # 网页端通常使用 CPU 推理
     model = ChessNet()
     try:
-        model.load_state_dict(torch.load("chess_master_model.pth", map_location=device))
+        model.load_state_dict(torch.load("chess_master_model.pth", map_location="cpu"))
         model.eval()
-    except:
-        st.warning("未找到模型文件，AI 将随机走子")
-    return model, device
+    except: pass
+    return model
 
-model, device = load_model()
+model = load_model()
 
-# --- 3. Streamlit UI 逻辑 ---
-st.title("🤖 Gemini Chess AI")
-st.sidebar.info("使用 PyTorch 训练的残差网络象棋助手")
+# --- 3. 辅助函数：渲染 SVG 棋盘 ---
+def render_board(board):
+    board_svg = chess.svg.board(board=board, size=400)
+    b64 = base64.b64encode(board_svg.encode('utf-8')).decode("utf-8")
+    return f'<img src="data:image/svg+xml;base64,{b64}"/>'
 
-# 初始化棋盘状态
+# --- 4. UI 逻辑 ---
+st.title("🤖 Gemini Chess AI (SVG 版)")
+
 if 'fen' not in st.session_state:
     st.session_state.fen = chess.STARTING_FEN
 
 board = chess.Board(st.session_state.fen)
 
-# 渲染棋盘并获取玩家走法
-# 注意：streamlit-chess 会返回发生的走法
-move_log = st_chess_board(fen=st.session_state.fen, key="board")
+# 显示棋盘
+st.write(render_board(board), unsafe_allow_html=True)
 
-# 如果玩家移动了
-if move_log and move_log != st.session_state.get('last_move'):
-    board.push_san(move_log)
-    st.session_state.last_move = move_log
-    
-    # AI 轮到黑棋走子
-    if not board.is_game_over() and board.turn == chess.BLACK:
-        with st.spinner("AI 正在思考..."):
-            state = encode_board(board).unsqueeze(0).to(device)
-            with torch.no_grad():
-                logits = model(state)
+# 玩家输入走法
+move_input = st.text_input("输入你的走法 (例如 e2e4):")
+
+if st.button("走子"):
+    try:
+        move = chess.Move.from_uci(move_input)
+        if move in board.legal_moves:
+            board.push(move)
             
-            legal_moves = list(board.legal_moves)
-            best_move = max(legal_moves, key=lambda m: logits[0, m.from_square * 64 + m.to_square])
-            board.push(best_move)
+            # AI 思考
+            if not board.is_game_over():
+                with st.spinner("AI 思考中..."):
+                    state = encode_board(board).unsqueeze(0)
+                    with torch.no_grad():
+                        logits = model(state)
+                    legal_moves = list(board.legal_moves)
+                    best_move = max(legal_moves, key=lambda m: logits[0, m.from_square * 64 + m.to_square])
+                    board.push(best_move)
             
-        st.session_state.fen = board.fen()
-        st.rerun() # 强制刷新页面显示 AI 走子
+            st.session_state.fen = board.fen()
+            st.rerun()
+        else:
+            st.error("非法走法！")
+    except:
+        st.error("输入格式错误，请使用 UCI 格式（如 e2e4）")
 
 if board.is_game_over():
-    st.success(f"游戏结束! 结果: {board.result()}")
-    if st.button("重新开始"):
+    st.success(f"游戏结束！结果: {board.result()}")
+    if st.button("重开"):
         st.session_state.fen = chess.STARTING_FEN
         st.rerun()
