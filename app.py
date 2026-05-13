@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_chess import chess_board
+from streamlit_chess_board import st_chess_board
 import chess
 import torch
 import torch.nn as nn
@@ -72,7 +72,7 @@ board = chess.Board(st.session_state.fen)
 
 # 渲染棋盘并获取玩家走法
 # 注意：streamlit-chess 会返回发生的走法
-move_log = chess_board(fen=st.session_state.fen, key="board")
+move_log = st_chess_board(fen=st.session_state.fen, key="board")
 
 # 如果玩家移动了
 if move_log and move_log != st.session_state.get('last_move'):
