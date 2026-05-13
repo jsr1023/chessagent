@@ -1,3 +1,4 @@
 streamlit
+streamlit-chess-component
 chess
 torch --index-url https://download.pytorch.org/whl/cpu
