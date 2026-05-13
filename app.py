@@ -1,10 +1,9 @@
 import streamlit as st
+from streamlit_chess_component import chess_component
 import chess
-import chess.svg
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import base64
 
 # --- 1. 模型架构 (保持不变) ---
 class ResBlock(nn.Module):
@@ -54,40 +53,35 @@ def load_model():
     try:
         model.load_state_dict(torch.load("chess_master_model.pth", map_location="cpu"))
         model.eval()
-    except: pass
+    except:
+        st.error("无法加载模型文件！")
     return model
 
 model = load_model()
 
-# --- 3. 辅助函数：渲染 SVG 棋盘 ---
-def render_board(board):
-    board_svg = chess.svg.board(board=board, size=400)
-    b64 = base64.b64encode(board_svg.encode('utf-8')).decode("utf-8")
-    return f'<img src="data:image/svg+xml;base64,{b64}"/>'
-
-# --- 4. UI 逻辑 ---
-st.title("🤖 Gemini Chess AI (SVG 版)")
+# --- 3. UI 逻辑 ---
+st.title("🤖 Gemini AI Chess")
 
 if 'fen' not in st.session_state:
     st.session_state.fen = chess.STARTING_FEN
 
+# 使用鼠标交互组件
+# 返回值 move 是玩家在网页上拖拽/点击产生的走法 (例如 "e2e4")
+player_move_uci = chess_component(fen=st.session_state.fen, key="chess_board")
+
 board = chess.Board(st.session_state.fen)
 
-# 显示棋盘
-st.write(render_board(board), unsafe_allow_html=True)
-
-# 玩家输入走法
-move_input = st.text_input("输入你的走法 (例如 e2e4):")
-
-if st.button("走子"):
+# 检查玩家是否进行了新操作
+if player_move_uci and player_move_uci != st.session_state.get('last_move'):
     try:
-        move = chess.Move.from_uci(move_input)
+        move = chess.Move.from_uci(player_move_uci)
         if move in board.legal_moves:
             board.push(move)
+            st.session_state.last_move = player_move_uci
             
-            # AI 思考
+            # AI 响应
             if not board.is_game_over():
-                with st.spinner("AI 思考中..."):
+                with st.spinner("AI 正在思考..."):
                     state = encode_board(board).unsqueeze(0)
                     with torch.no_grad():
                         logits = model(state)
@@ -95,15 +89,17 @@ if st.button("走子"):
                     best_move = max(legal_moves, key=lambda m: logits[0, m.from_square * 64 + m.to_square])
                     board.push(best_move)
             
+            # 更新全局 FEN 状态
             st.session_state.fen = board.fen()
             st.rerun()
         else:
-            st.error("非法走法！")
-    except:
-        st.error("输入格式错误，请使用 UCI 格式（如 e2e4）")
+            st.error("非法走法，请重试")
+    except Exception as e:
+        pass
 
 if board.is_game_over():
-    st.success(f"游戏结束！结果: {board.result()}")
-    if st.button("重开"):
+    st.write(f"### 游戏结束! 结果: {board.result()}")
+    if st.button("重新开始"):
         st.session_state.fen = chess.STARTING_FEN
+        st.session_state.last_move = None
         st.rerun()
